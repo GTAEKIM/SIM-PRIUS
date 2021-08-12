@@ -1,0 +1,601 @@
+int i,m, j, k, n,unit, rect[4], red[16384], green[16384], blue[16384], intensity[16384], Max_Frequency, max2, PFS_z, EMgain, org_488EMgain, org_561EMgain, org_640EMgain, PFS_new, key2;
+double x,y,z, pre_X, pre_Y, cur_X, cur_Y, dx, dy, Fid_x[40], Fid_y[40], Fid_z[40], p488, org_p488, p561, org_p561, p640, org_p640, num_ribbon[40], org_488Exposure, org_561Exposure, org_640Exposure, Exposure, sx, sy, nx, ny;
+char pos_string[100], pos_X[100], pos_Y[100], pixel_X[100], pixel_Y[100], stage_x[100], stage_y[100], pos_string[100], dir[300], excel[300], imagename[300], DATA[300], buff[300], buff1[300], buff2[300], buff3[300], buff4[300], buff22[300], buff33[300], buff44[300];
+dword key, tab, keys[10], mean[4], min[4], max[4], maxFrekv[4];
+int returned;
+
+
+//Select fiducial markers on each section : "+", Finish : "ESC"
+
+keys[0] = VK_ADD;
+keys[1] = VK_ESC;
+k = 0;
+Enable_Interrupt_InScript(1);
+while(key != keys[1])
+{
+	key = Int_GetEvents(keys, 2);
+	if(key == keys[0])
+	{
+		StgGetPosXY(&x, &y);
+		Fid_x[k] = x;
+		Fid_y[k] = y;
+		Fid_z[k] = Stg_GetPFSLensOffsetPosition();
+//Show current fiducial marker data on left-down side of window
+		num_ribbon[k] = Int_GetValue("Enter Current Section Number", "Current section # : ", 1, 1, 10);
+		sprintf(pos_string, "section %d fiducial marker (X,Y) : (%f, %f) PFS offset : %f", "num_ribbon[k], Fid_x[k], Fid_y[k], Fid_z[k]"); 
+		Int_CreateTextWindow(pos_string, 3, RGB(0, 0, 0), RGB(255, 255, 255), 50);
+		k = k + 1;
+	}
+}
+Int_CloseTextWindow();
+Enable_Interrupt_InScript(2);
+
+//Select directory including coordinate excel files
+
+strcpy(dir, "c:\Users\KBRI N-SIM\Desktop");
+SelectFile(dir, "", 1);
+
+
+for(m = 0; m < k; m = m + 1)
+{
+
+   buff = dir;
+
+//Move stage to m th fiducial marker
+
+   SelectOptConf("488_SIM");
+   LiveSync();
+	
+   StgMoveXY(Fid_x[m], Fid_y[m], 0);
+   Stg_SetPFSStatus(1);
+   Wait(2);
+   pre_X = Fid_x[m];
+   pre_Y = Fid_y[m];
+
+//Excel open
+
+   sprintf(excel, "\%04d.xlsx", "num_ribbon[m]");
+   strcat(buff, excel);
+   Excel_Open(buff, 1, 1);
+   Wait(5);
+
+//Get setting variables
+
+   SelectOptConf("488_SIM");
+   CameraGet_GainMultiplier(1, &org_488EMgain);
+   CameraGet_Exposure(1, &org_488Exposure);
+   CameraGet_NSimLaser488Power(1, &org_p488);
+   SelectOptConf("561_SIM");
+   CameraGet_GainMultiplier(1, &org_561EMgain);
+   CameraGet_Exposure(1, &org_561Exposure);
+   CameraGet_NSimLaser561Power(1, &org_p561);
+   SelectOptConf("640_SIM");
+   CameraGet_GainMultiplier(1, &org_640EMgain);
+   CameraGet_Exposure(1, &org_640Exposure);
+   CameraGet_NSimLaser640Power(1, &org_p640);	
+
+   for(i = 0; i < 1000; i = i + 1)
+   {
+//Read Excel values
+
+         Excel_GetValueEx(0, i, pos_X);
+         Excel_GetValueEx(1, i, pos_Y);
+         Excel_GetValueEx(2, i, pixel_X);
+         Excel_GetValueEx(3, i, pixel_Y);
+         cur_X = atof(pos_X);
+         cur_Y = atof(pos_Y);
+         dx = atof(pixel_X);
+         dy = atof(pixel_Y);
+
+//Ending read condition
+
+         if ((cur_X == 0) && (cur_Y == 0))
+         {
+            WaitText(1., "complete.");
+            goto NEXT;
+         }
+
+//Display current coordinate information
+         j = i+1;
+         sprintf(pos_string, "Excel #%04d - %d. PX(%f,%f)", "num_ribbon[m], j, dx, dy"); 
+         Int_CreateTextWindow(pos_string, 3, RGB(0, 0, 0), RGB(255, 255, 255), 30);
+         ActivateDocument("Frozen");
+         LiveSync();
+
+//Move stage to ROI
+
+         SelectOptConf("488_SIM");
+         cur_X = pre_X + cur_X;
+         cur_Y = pre_Y + cur_Y;
+         StgMoveXY(cur_X, cur_Y, 0);// 0: Absolute, 1: Relative.
+         Stg_SetPFSStatus(1);
+         Stg_WaitForPFS(8);
+         pre_X = cur_X;
+         pre_Y = cur_Y;
+      
+//ROI double-checking
+
+         Enable_Interrupt_InScript(1);
+         while(tab != keys[1])
+         {
+            tab = Int_GetEvents(keys, 2);
+            if(tab == keys[0])
+            {
+               StgGetPosXY(&nx, &ny);
+               Excel_SetValueEx(4,i,nx);
+               Excel_SetValueEx(5,i,ny);
+               sprintf(pos_string, "STG Position (%f, %f)", "nx, ny"); 
+               Int_CreateTextWindow(pos_string, 3, RGB(0, 0, 0), RGB(255, 255, 255), 50);
+            }
+         }
+         tab = keys[0];
+         Int_CloseTextWindow();
+         Enable_Interrupt_InScript(2);
+   }
+   NEXT:
+   Excel_Save();
+   Excel_Close();
+   Wait(1);
+   Int_CloseTextWindow();
+}
+
+//Imaging part  
+for(m = 0; m < k; m = m + 1)
+{	
+//Make data directory (# of ribbon/SIM images, Conventional images, Raw SIM data)
+
+   buff = dir;
+   buff1 = buff;
+   sprintf(DATA, "\%04d", "num_ribbon[m]");
+   strcat(buff1, DATA);
+   MakeDirectory(buff1);
+   buff2 = buff1;
+   strcat(buff2, "\SIM");
+   MakeDirectory(buff2);
+   buff3 = buff1;
+   strcat(buff3, "\CONV");
+   MakeDirectory(buff3);
+   buff4 = buff1;
+   strcat(buff4, "\RAW");
+   MakeDirectory(buff4);
+	
+   SelectOptConf("488_SIM");
+   LiveSync();
+   Wait(5);
+   sprintf(excel, "\%04d.xlsx", "num_ribbon[m]");
+   strcat(buff, excel);
+   Wait(5);
+   Excel_Open(buff, 1, 1);
+   Wait(5);
+	
+   for(i = 0; i < 1000; i = i + 1)
+   {
+      buff22 = buff2;
+      buff33 = buff3;
+      buff44 = buff4;
+      j = i+1;
+      Excel_GetValueEx(0, i, pos_X);
+      Excel_GetValueEx(1, i, pos_Y);
+      cur_X = atof(pos_X);
+      cur_Y = atof(pos_Y);
+      Excel_GetValueEx(2, i, pixel_X);
+      Excel_GetValueEx(3, i, pixel_Y);		
+      dx = atof(pixel_X);
+      dy = atof(pixel_Y);		  
+      Excel_GetValueEx(4, i, stage_x);
+      Excel_GetValueEx(5, i, stage_y);
+      sx = atof(stage_x);
+      sy = atof(stage_y);
+
+//Ending read condition
+
+      if ((cur_X == 0) && (cur_Y == 0))
+      {
+         WaitText(1., "All points complete.");
+         goto END;
+      }		  
+//Move stage to corrected ROI
+      StgMoveXY(sx, sy, 0);
+      Wait(2);
+
+//Laser power control (adjust signal frequency range to 4000< maximum frequency < 10000)
+
+//488-SIM control
+      SelectOptConf("488_SIM");
+      LiveSync();
+      p488 = org_p488;
+      EMgain = org_488EMgain;
+      Exposure = org_488Exposure;
+		
+      CameraSet_NSimLaser488Power(1, p488);
+      CameraSet_GainMultiplier(1, EMgain);
+      CameraSet_Exposure(1, Exposure);
+      
+      if (i==0)
+      {
+         Get_Histogram(0, rect, mean, min, max, maxFrekv, red, green, blue, intensity);
+//Get maximum frequency
+         Max_Frequency = max[0];
+         PFS_new = Stg_GetPFSLensOffsetPosition();
+//Move stage along Z direction (NOT PFS offset)
+         PFS_z = Stg_GetPFSLensOffsetPosition();//Stg_GetZposition
+         PFS_z = PFS_z-400;//Move down PFS offset as 400 PFS unit.
+//Move up PFS offset as 100 PFS unit. repeat 8 times. Scanning starts on current PFS offset and moves from -400 PFS unit to +400 PFS unit
+         for (n = 0; n < 8; n = n + 1)
+         {
+            PFS_z = PFS_z + 100;
+            Stg_SetPFSLensOffsetPosition(PFS_z);//Z-drive move
+            Wait(2);
+            Get_Histogram(0, rect, mean, min, max, maxFrekv, red, green, blue, intensity);
+            max2 = max[0];
+            if (max2 > Max_Frequency)
+            {
+               Max_Frequency = max2;
+               PFS_new = Stg_GetPFSLensOffsetPosition();//Stg_GetZposition
+            }
+         }
+
+//Move PFS offset value to best position
+         Stg_SetPFSLensOffsetPosition(PFS_new);
+      }
+      else
+      {
+         Get_Histogram(0, rect, mean, min, max, maxFrekv, red, green, blue, intensity);
+//Get maximum frequency
+         Max_Frequency = max[0];
+         PFS_new = Stg_GetPFSLensOffsetPosition();
+//Move stage along Z direction (NOT PFS offset)
+         PFS_z = Stg_GetPFSLensOffsetPosition();//Stg_GetZposition
+         PFS_z = PFS_z-400;//Move down PFS offset as 400 PFS unit.
+//Move up PFS offset as 100 PFS unit. repeat 8 times. Scanning starts on current PFS offset and moves from -400 PFS unit to +400 PFS unit
+         for (n = 0; n < 8; n = n + 1)
+         {
+            PFS_z = PFS_z + 100;
+            Stg_SetPFSLensOffsetPosition(PFS_z);//Z-drive move
+            Wait(2);
+            Get_Histogram(0, rect, mean, min, max, maxFrekv, red, green, blue, intensity);
+            max2 = max[0];
+            if (max2 > Max_Frequency)
+            {
+               Max_Frequency = max2;
+               PFS_new = Stg_GetPFSLensOffsetPosition();//Stg_GetZposition
+            }
+         }
+
+//Move PFS offset value to best position
+         Stg_SetPFSLensOffsetPosition(PFS_new);
+      }
+      while(TRUE)
+      {
+         Get_Histogram(0, rect, mean, min, max, maxFrekv, red, green, blue, intensity);
+         if ((max[0] < 12000) && (max[0] > 6000))//proper range
+            break;
+         if (max[0] > 12000)
+         {
+            if (p488 > 0)
+            {
+               p488 = p488 - 2;
+               CameraSet_NSimLaser488Power(1, p488);					
+            }
+
+         if ((p488 == 0) || (p488 < 0))//saturation, even 1% usage of laser
+         {
+            CameraSet_NSimLaser488Power(1, 1);
+            p488 = 1;
+            if (EMgain > 5)
+            {
+               EMgain = EMgain - 10;
+               CameraSet_GainMultiplier(1, EMgain);
+            }
+            if ((EMgain == 5) || (EMgain < 5))
+            {
+               Exposure = Exposure - 50;
+               CameraSet_Exposure(1, Exposure);
+               if (Exposure < 35)
+               {
+                  break;
+               }
+            }
+         }
+         Wait(2);
+         }
+			if (max[0] < 6000)
+         {
+            if (p488 < 100)
+            {
+               p488 = p488 + 2;
+               CameraSet_NSimLaser488Power(1, p488);					
+            }
+            if ((p488 == 100) || (p488 > 100))//weak signal
+            {
+               CameraSet_NSimLaser488Power(1, 100);
+               p488 = 100;
+               if (EMgain < 300)
+               {
+                  EMgain = EMgain + 10;
+                  CameraSet_GainMultiplier(1, EMgain);
+               }
+               if ((EMgain > 300) || (EMgain == 300))
+               {
+                  Exposure = Exposure + 50;
+                  CameraSet_Exposure(1, Exposure);
+                  if (Exposure > 1000)
+                  {
+                     break;
+                  }
+               }
+            }
+            Wait(2);
+         }
+      }
+		
+//Apply adjusted 488 laser power to 488-WF
+      SelectOptConf("488_WF");
+      CameraSet_NSimLaser488Power(1, p488);
+      CameraSet_Exposure(1, Exposure);
+      CameraSet_GainMultiplier(1, EMgain);
+
+//561-SIM control	
+      SelectOptConf("561_SIM");
+      LiveSync();
+      p561 = org_p561;
+      EMgain = org_561EMgain;
+      Exposure = org_561Exposure;
+      CameraSet_NSimLaser561Power(1, p561);
+      CameraSet_GainMultiplier(1, EMgain);
+      CameraSet_Exposure(1, Exposure);
+      Get_Histogram(0, rect, mean, min, max, maxFrekv, red, green, blue, intensity);
+//Get maximum frequency
+      Max_Frequency = max[0];
+      PFS_new = Stg_GetPFSLensOffsetPosition();
+//Move stage along Z direction (NOT PFS offset)
+      PFS_z = Stg_GetPFSLensOffsetPosition();//Stg_GetZposition
+      PFS_z = PFS_z-400;//Move down PFS offset as 400 PFS unit.
+//Move up PFS offset as 100 PFS unit. repeat 8 times. Scanning starts on current PFS offset and moves from -400 PFS unit to +400 PFS unit
+      for (n = 0; n < 8; n = n + 1)
+      {
+         PFS_z = PFS_z + 100;
+         Stg_SetPFSLensOffsetPosition(PFS_z);//Z-drive move
+         Wait(2);
+         Get_Histogram(0, rect, mean, min, max, maxFrekv, red, green, blue, intensity);
+         max2 = max[0];
+         if (max2 > Max_Frequency)
+         {
+            Max_Frequency = max2;
+            PFS_new = Stg_GetPFSLensOffsetPosition();//Stg_GetZposition
+         }
+      }
+
+//Move PFS offset value to best position
+      Stg_SetPFSLensOffsetPosition(PFS_new);
+
+
+
+      while(TRUE)
+      {
+         Get_Histogram(0, rect, mean, min, max, maxFrekv, red, green, blue, intensity);
+         if ((max[0] < 12000) && (max[0] > 6000))
+            break;
+         if (max[0] > 12000)
+         {
+            if (p561 > 0)
+            {
+               p561 = p561 - 2;
+               CameraSet_NSimLaser561Power(1, p561);
+            }
+            if ((p561 == 0) || (p561 < 0))
+               {
+                  CameraSet_NSimLaser561Power(1, 1);
+                  p561 = 1;
+                  if (EMgain > 5)
+                  {
+                     EMgain = EMgain - 10;
+                     CameraSet_GainMultiplier(1, EMgain);
+                  }
+                  if ((EMgain == 5) || (EMgain < 5))
+                  {
+                     Exposure = Exposure - 50;
+                     CameraSet_Exposure(1, Exposure);
+                     if (Exposure < 35)
+                     {
+                        break;
+                     }
+                  }
+               }
+            Wait(2);
+         }
+         if (max[0] < 6000)
+         {
+            if (p561 < 100)
+            {
+               p561 = p561 + 2;
+               CameraSet_NSimLaser561Power(1, p561);
+            }
+            if ((p561 == 100) || (p561 > 100))
+            {
+               CameraSet_NSimLaser561Power(1, 100);
+               p561 = 100;
+               if (EMgain < 300)
+               {
+                  EMgain = EMgain + 10;
+                  CameraSet_GainMultiplier(1, EMgain);
+               }
+               if ((EMgain > 300) || (EMgain == 300))
+               {
+                  Exposure = Exposure + 50;
+                  CameraSet_Exposure(1, Exposure);
+                  if (Exposure > 1000)
+                  {
+                     break;
+                  }
+               }
+            }            
+         Wait(2);
+      }
+		}
+		
+//Apply adjusted 561 laser power to 561-WF
+		
+		SelectOptConf("561_WF");
+		CameraSet_NSimLaser561Power(1, p561);
+		CameraSet_Exposure(1, Exposure);
+		CameraSet_GainMultiplier(1, EMgain);
+	
+//640-SIM control
+		
+		SelectOptConf("640_SIM");
+		LiveSync();
+		p640 = org_p640;
+		EMgain = org_640EMgain;
+		Exposure = org_640Exposure;
+		CameraSet_NSimLaser640Power(1, p640);
+		CameraSet_GainMultiplier(1, EMgain);
+		CameraSet_Exposure(1, Exposure);
+
+		Get_Histogram(0, rect, mean, min, max, maxFrekv, red, green, blue, intensity);
+//Get maximum frequency
+		Max_Frequency = max[0];
+		PFS_new = Stg_GetPFSLensOffsetPosition();
+//Move stage along Z direction (NOT PFS offset)
+		PFS_z = Stg_GetPFSLensOffsetPosition();//Stg_GetZposition
+		PFS_z = PFS_z-400;//Move down PFS offset as 400 PFS unit.
+//Move up PFS offset as 50 PFS unit. repeat 8 times. Scanning starts on current PFS offset and moves from -200 PFS unit to +200 PFS unit
+		for (n = 0; n < 8; n = n + 1)
+		{
+			PFS_z = PFS_z + 100;
+			Stg_SetPFSLensOffsetPosition(PFS_z);//Z-drive move
+			Wait(2);
+			Get_Histogram(0, rect, mean, min, max, maxFrekv, red, green, blue, intensity);
+			max2 = max[0];
+			if (max2 > Max_Frequency)
+			{
+				Max_Frequency = max2;
+				PFS_new = Stg_GetPFSLensOffsetPosition();//Stg_GetZposition
+			}
+		}
+
+//Move PFS offset value to best position
+		
+		Stg_SetPFSLensOffsetPosition(PFS_new);
+
+
+
+		while(TRUE)
+		{
+			Get_Histogram(0, rect, mean, min, max, maxFrekv, red, green, blue, intensity);
+			if ((max[0] < 12000) && (max[0] > 6000))
+			break;
+			if (max[0] > 12000)
+			{
+				if (p640 > 0)
+				{
+					p640 = p640 - 2;
+					CameraSet_NSimLaser640Power(1, p640);
+				}
+				if ((p640 == 0) || (p640 < 0))
+				{
+					CameraSet_NSimLaser640Power(1, 1);
+					p640 = 1;
+					if (EMgain > 5)
+					{
+						EMgain = EMgain - 10;
+						CameraSet_GainMultiplier(1, EMgain);
+					}
+					if ((EMgain == 5) || (EMgain < 5))
+					{
+						Exposure = Exposure - 50;
+						CameraSet_Exposure(1, Exposure);
+						if (Exposure < 10)
+						{
+							break;
+						}
+					}
+				}            
+				Wait(2);
+			}
+			if (max[0] < 6000)
+			{
+				if (p640 < 100)
+				{
+					p640 = p640 + 2;
+					CameraSet_NSimLaser640Power(1, p640);
+				}
+				if ((p640 == 100) || (p640 > 100))
+				{
+					CameraSet_NSimLaser640Power(1, 100);
+					p640 = 100;
+					if (EMgain < 300)
+					{
+						EMgain = EMgain + 10;
+						CameraSet_GainMultiplier(1, EMgain);
+					}
+					if ((EMgain > 300) || (EMgain == 300))
+					{
+						Exposure = Exposure + 50;
+						CameraSet_Exposure(1, Exposure);
+						if (Exposure > 1000)
+						{
+							break;
+						}
+					}
+				}            
+
+				Wait(2);
+			}
+		}
+		
+//Apply adjusted 640 laser power to 640-WF
+		
+      SelectOptConf("640_WF");
+      CameraSet_NSimLaser640Power(1, p640);
+      CameraSet_Exposure(1, Exposure);
+      CameraSet_GainMultiplier(1, EMgain);
+
+//Change ND setup to SIM. ND setup should be defined before start.
+      ND_LoadExperiment("488-561-640-SIM");
+
+//Run ND Acquisition
+      StgMoveXY(sx, sy, 0);// 0: Absolute, 1: Relative
+      ND_RunLambdaExp();
+		
+//SIM Reconstruction (default setting)
+      NSIMProcessImageWithLastSettings();
+
+//Save reconstructed SIM image (TIFF image)
+      sprintf(imagename, "\%04d_PX(%f,%f)_STG(%f,%f)_SIM.tif", "j, dx, dy, sx, sy");
+      strcat(buff22, imagename);
+      ImageSaveAs(buff22, 2, 0);
+
+//Close reconstructed image window
+      CloseCurrentDocument(QUERYSAVE_NO);
+
+//Save raw image (ND2 image)
+      sprintf(imagename, "\%04d_PX(%f,%f)_STG(%f,%f)_raw.nd2", "j, dx, dy, sx, sy");
+      strcat(buff44, imagename);
+      ImageSaveAs(buff44, 2, 0);
+
+//Close raw image window
+      CloseCurrentDocument(QUERYSAVE_NO);
+
+//Change ND setup to Wide Field(Conventional image)
+      ND_LoadExperiment("488-561-640-WF");
+
+//Run ND Acquisition
+      StgMoveXY(sx, sy, 0);// 0: Absolute, 1: Relative
+      ND_RunLambdaExp();
+
+//Save conventional wide field image (TIFF image)
+      sprintf(imagename, "\%04d_PX(%f,%f)_STG(%f,%f)_WF.tif","j, dx, dy, sx, sy");
+      strcat(buff33, imagename);
+      ImageSaveAs(buff33, 2, 0);
+
+//Close wide field image window
+      CloseCurrentDocument(QUERYSAVE_NO);
+   }
+	  END:
+	  Excel_Close();
+	  Wait(1);
+	  Int_CloseTextWindow();
+	  Int_CloseTextWindow();
+}
+return 0;          
